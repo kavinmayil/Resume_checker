@@ -1,67 +1,98 @@
 import streamlit as st
 import PyPDF2
-import os
 import re
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import LabelEncoder
 
+# Sample data for training
+data = {
+    "resume_text": [
+        "python sql data analysis power bi statistics",
+        "html css javascript react node.js",
+        "c c++ arduino raspberry pi microcontroller spi",
+        "tensorflow keras python nlp machine learning",
+        "aws docker kubernetes devops ci cd terraform"
+    ],
+    "role": [
+        "Data Analyst",
+        "Web Developer",
+        "Embedded Engineer",
+        "AI Engineer",
+        "Cloud Engineer"
+    ]
+}
+df = pd.DataFrame(data)
+
+# Encode labels
+le = LabelEncoder()
+df['encoded_role'] = le.fit_transform(df['role'])
+
+# Train model
+vectorizer = TfidfVectorizer()
+X = vectorizer.fit_transform(df['resume_text'])
+y = df['encoded_role']
+
+model = DecisionTreeClassifier()
+model.fit(X, y)
+
+# Role-specific keywords
 ROLE_KEYWORDS = {
-    "data analyst": {"python", "excel", "sql", "power bi", "statistics", "data visualization"},
-    "web developer": {"html", "css", "javascript", "react", "node.js", "api"},
-    "ai engineer": {"python", "tensorflow", "keras", "machine learning", "deep learning", "nlp"},
-    "embedded engineer": {"c", "c++", "microcontroller", "i2c", "spi", "uart", "arduino", "raspberry pi", "pcb"},
-    "cloud engineer": {"aws", "azure", "gcp", "docker", "kubernetes", "terraform", "devops", "ci/cd"},
+    "Data Analyst": {"python", "excel", "sql", "power bi", "statistics"},
+    "Web Developer": {"html", "css", "javascript", "react", "node.js"},
+    "AI Engineer": {"python", "tensorflow", "keras", "machine learning", "nlp"},
+    "Embedded Engineer": {"c", "c++", "microcontroller", "arduino", "raspberry pi"},
+    "Cloud Engineer": {"aws", "docker", "kubernetes", "terraform", "ci", "cd"}
 }
 
-def extract_text_from_pdf(pdf_file):
-    reader = PyPDF2.PdfReader(pdf_file)
-    text = ""
+# ---------------- Streamlit UI ----------------
+st.title("📄 ML Resume Analyzer")
+
+selected_role = st.selectbox("🎯 Select Target Role", list(ROLE_KEYWORDS.keys()))
+
+uploaded_file = st.file_uploader("📥 Upload Your Resume (PDF)", type="pdf")
+
+if uploaded_file and selected_role:
+    # Extract text
+    reader = PyPDF2.PdfReader(uploaded_file)
+    resume_text = ""
     for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text
-    return text.lower()
+        resume_text += page.extract_text().lower()
 
-def clean_text(text):
-    text = re.sub(r'[^a-zA-Z ]', ' ', text)
-    return set(text.lower().split())
+    # Predict role using ML
+    X_input = vectorizer.transform([resume_text])
+    predicted_encoded = model.predict(X_input)[0]
+    predicted_role = le.inverse_transform([predicted_encoded])[0]
 
-def analyze_resume(resume_text, role_keywords):
-    resume_words = clean_text(resume_text)
-    matched = resume_words.intersection(role_keywords)
-    missing = role_keywords - resume_words
-    match_percent = (len(matched) / len(role_keywords)) * 100
-    return matched, missing, match_percent
+    # Compare prediction with selected role
+    confidence = model.predict_proba(X_input)[0][predicted_encoded] * 100
 
-st.title("🪩 Resume Analyzer")
+    # Skill match
+    resume_words = set(re.sub(r'[^a-zA-Z ]', ' ', resume_text).split())
+    target_keywords = ROLE_KEYWORDS[selected_role]
+    matched = resume_words.intersection(target_keywords)
+    missing = target_keywords - resume_words
 
-role = st.selectbox("🎯 Select Role Applied For", list(ROLE_KEYWORDS.keys()))
-resume_name = st.text_input("📄 Enter resume file name (without .pdf)")
+    # Match percentage based on skills
+    skill_match_percent = (len(matched) / len(target_keywords)) * 100
 
-if resume_name:
-    resume_path = f"{resume_name}.pdf"
-    
-    if os.path.exists(resume_path):
-        with open(resume_path, "rb") as file:
-            resume_text = extract_text_from_pdf(file)
-            matched, missing, score = analyze_resume(resume_text, ROLE_KEYWORDS[role])
+    # Result
+    st.markdown("## 📊 Result Analysis")
+    st.write(f"**Selected Role:** {selected_role}")
+    st.write(f"**Predicted Role:** {predicted_role}")
+    st.write(f"🧠 **Prediction Confidence:** {confidence:.2f}%")
+    st.write(f"✅ **Skill Match:** {skill_match_percent:.2f}%")
 
-            st.subheader("📊 Resume Analysis Report")
-            st.markdown(f"🔹 **Match Score:** `{score:.2f}%`")
-
-            st.markdown("✅ **Matched Skills**")
-            st.write(', '.join(sorted(matched)) if matched else "None")
-
-            st.markdown("❌ **Missing Skills**")
-            st.write(', '.join(sorted(missing)) if missing else "None")
-
-            # Check for important sections
-            st.markdown("📌 **Section Check**")
-            st.success("🎯 Career Objective found ✅" if "objective" in resume_text else "⚠️ Career Objective missing")
-            st.success("📁 Projects section found ✅" if "project" in resume_text else "⚠️ Projects section missing")
-
-            # Suitability conclusion
-            if score >= 70:
-                st.success("🟢 This resume is suitable for the selected role.")
-            else:
-                st.error("🔴 Resume not suitable. Add more relevant skills.")
+    if predicted_role.lower() == selected_role.lower() and skill_match_percent >= 60:
+        st.success("✅ Your resume is suitable for this role!")
     else:
-        st.error("📂 Resume file not found. Please place it in the same directory.")
+        st.warning("⚠️ Your resume needs improvement for this role.")
+
+    st.markdown("### ✅ Matched Skills")
+    st.write(', '.join(sorted(matched)) if matched else "None")
+
+    st.markdown("### ❌ Missing Skills")
+    st.write(', '.join(sorted(missing)) if missing else "None")
